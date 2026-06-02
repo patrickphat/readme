@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Menu, X } from "lucide-react";
@@ -129,8 +129,12 @@ export function Reader({ bookId }: ReaderProps) {
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Compute chunks synchronously so they're always current on every render
+  const chunks = useMemo(() => buildChunks(blocks), [blocks]);
+
   // Refs
   const chunksRef = useRef<SpeechChunk[]>([]);
+  chunksRef.current = chunks; // always up-to-date, no async gap
   const playbackRateRef = useRef(playbackRate);
   const voiceURIRef = useRef(selectedVoiceURI);
   const headingVoiceURIRef = useRef(headingVoiceURI);
@@ -266,13 +270,12 @@ export function Reader({ bookId }: ReaderProps) {
       .finally(() => setChapterLoading(false));
   }, [bookId, epubData, chapters, currentIdx]);
 
-  // ── Rebuild speech chunks ─────────────────────────────────────────────────
+  // ── Stop speech when blocks change (chapter switched / content reloaded) ────
   useEffect(() => {
     if (headingPauseRef.current) clearTimeout(headingPauseRef.current);
     window.speechSynthesis?.cancel();
     setIsPlaying(false);
-    chunksRef.current = buildChunks(blocks);
-    // Don't reset activeWordIdx here so the resume position is preserved
+    // chunksRef is kept current via useMemo assignment above — no rebuild needed here
   }, [blocks]);
 
   // ── Save progress when chapter/word changes ───────────────────────────────
@@ -374,17 +377,21 @@ export function Reader({ bookId }: ReaderProps) {
 
   function handlePlayPause() {
     const ss = window.speechSynthesis;
-    if (ss.paused) {
-      ss.resume();
-      setIsPlaying(true);
-    } else if (isPlaying) {
+    if (isPlaying) {
+      // Currently speaking → pause
       ss.pause();
       setIsPlaying(false);
+    } else if (ss.paused && ss.speaking) {
+      // Legitimately mid-utterance and paused → resume
+      ss.resume();
+      setIsPlaying(true);
     } else {
+      // Not playing (includes stale ss.paused=true left by cancel()) → start fresh
+      ss.cancel(); // clears any lingering paused state
       const startIdx = activeWordIdx >= 0 ? activeWordIdx : 0;
-      const chunks = chunksRef.current;
-      if (chunks.length === 0) return;
-      const { ci, wordWithinChunk } = findChunkForWord(chunks, startIdx);
+      const currentChunks = chunksRef.current;
+      if (currentChunks.length === 0) return;
+      const { ci, wordWithinChunk } = findChunkForWord(currentChunks, startIdx);
       speakFromChunk(ci, wordWithinChunk);
     }
   }
