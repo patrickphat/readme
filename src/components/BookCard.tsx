@@ -39,9 +39,9 @@ export function BookCard({ book, onOpen, onDelete }: BookCardProps) {
         {/* Progress bar overlay at bottom of cover */}
         {hasProgress && (
           <div className="absolute bottom-0 left-0 right-0">
-            <div className="h-1 bg-black/20">
+            <div className="h-1.5 bg-white/30">
               <div
-                className="h-full bg-primary transition-all"
+                className="h-full bg-white transition-all"
                 style={{ width: `${progressPct}%` }}
               />
             </div>
@@ -50,7 +50,7 @@ export function BookCard({ book, onOpen, onDelete }: BookCardProps) {
 
         {/* Progress % badge */}
         {hasProgress && (
-          <div className="absolute top-1.5 right-1.5 bg-black/60 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded-full leading-none">
+          <div className="absolute bottom-3 right-1.5 bg-black/70 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded-full leading-none ring-1 ring-white/20">
             {progressPct}%
           </div>
         )}
