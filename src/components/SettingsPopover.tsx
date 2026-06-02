@@ -31,8 +31,7 @@ export function SettingsPopover({
   useEffect(() => {
     function loadVoices() {
       const all = window.speechSynthesis.getVoices();
-      // Show all voices — no language filter so nothing is hidden (Siri voices, etc.)
-      const sorted = [...all].sort((a, b) => {
+      const sorted = [...all].filter((v) => v.lang.startsWith("en")).sort((a, b) => {
         // Local (system) voices first, then alphabetical
         if (a.localService !== b.localService) return a.localService ? -1 : 1;
         return a.name.localeCompare(b.name);
