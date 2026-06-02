@@ -141,6 +141,8 @@ export function Reader({ bookId }: ReaderProps) {
   const headingPauseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // debounce timer for progress saves
   const saveProgressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // iOS silent audio loop — keeps the audio session alive so speech continues in background
+  const silentAudioRef = useRef<{ ctx: AudioContext; source: AudioBufferSourceNode } | null>(null);
   // track whether we've applied the initial saved progress for this book
   const progressAppliedRef = useRef(false);
   const currentIdxRef = useRef(currentIdx);
@@ -150,6 +152,7 @@ export function Reader({ bookId }: ReaderProps) {
   activeWordIdxRef.current = activeWordIdx;
 
   const totalWords = blocks.reduce((s, b) => s + b.words.length, 0);
+  const currentChapterTitle = chapters[currentIdx]?.title ?? "";
 
   // ── Sync settings from DB once on mount ──────────────────────────────────────
   useEffect(() => {
@@ -297,10 +300,62 @@ export function Reader({ bookId }: ReaderProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // ── iOS background audio: start a silent loop to keep the audio session alive ─
+  function ensureSilentLoop() {
+    if (silentAudioRef.current) return;
+    try {
+      const ctx = new AudioContext();
+      // 3-second silent buffer looped forever
+      const buffer = ctx.createBuffer(1, ctx.sampleRate * 3, ctx.sampleRate);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      source.connect(ctx.destination);
+      source.start();
+      silentAudioRef.current = { ctx, source };
+    } catch {}
+  }
+
+  // ── MediaSession: lock screen / Control Center controls ───────────────────
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: currentChapterTitle || bookTitle,
+      artist: bookTitle,
+      album: "epub reader",
+    });
+  }, [bookTitle, currentChapterTitle]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.setActionHandler("play", () => handlePlayPause());
+    navigator.mediaSession.setActionHandler("pause", () => handlePlayPause());
+    navigator.mediaSession.setActionHandler("previoustrack", () =>
+      setCurrentIdx((i) => Math.max(0, i - 1))
+    );
+    navigator.mediaSession.setActionHandler("nexttrack", () =>
+      setCurrentIdx((i) => Math.min(chapters.length - 1, i + 1))
+    );
+    return () => {
+      (["play", "pause", "previoustrack", "nexttrack"] as MediaSessionAction[]).forEach((a) => {
+        try { navigator.mediaSession.setActionHandler(a, null); } catch {}
+      });
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapters.length]);
+
   // Stop speech on unmount
   useEffect(() => {
     return () => {
       window.speechSynthesis?.cancel();
+      silentAudioRef.current?.source.stop();
+      silentAudioRef.current?.ctx.close();
+      silentAudioRef.current = null;
       if (saveProgressTimerRef.current) clearTimeout(saveProgressTimerRef.current);
       // Flush progress immediately on unmount
       saveProgress(bookId, currentIdxRef.current, Math.max(0, activeWordIdxRef.current));
@@ -373,6 +428,7 @@ export function Reader({ bookId }: ReaderProps) {
 
     window.speechSynthesis.speak(utt);
     setIsPlaying(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handlePlayPause() {
@@ -387,6 +443,7 @@ export function Reader({ bookId }: ReaderProps) {
       setIsPlaying(true);
     } else {
       // Not playing (includes stale ss.paused=true left by cancel()) → start fresh
+      ensureSilentLoop(); // unlock iOS audio session before speaking
       ss.cancel(); // clears any lingering paused state
       const startIdx = activeWordIdx >= 0 ? activeWordIdx : 0;
       const currentChunks = chunksRef.current;
@@ -448,8 +505,7 @@ export function Reader({ bookId }: ReaderProps) {
     saveSettings({ "epub-reader-heading-voice": voiceURI });
   }
 
-  const currentChapter = chapters[currentIdx];
-  const currentChapterTitle = currentChapter?.title ?? "";
+  // currentChapterTitle already computed above (needed by effects)
 
   if (bookLoading) {
     return (
