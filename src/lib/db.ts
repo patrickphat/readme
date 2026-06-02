@@ -1,9 +1,10 @@
-import { openDB, type IDBPDatabase } from "idb";
+// All persistence is now backed by Turso (via /api/books routes).
+// This module exposes the same interface the rest of the app uses.
 
 export interface BookChapter {
   title: string;
-  spineIdx: number; // index into epub spine, not sidebar index
-  level?: number;   // 0 = top-level TOC item, 1 = subitem, etc.
+  spineIdx: number;
+  level?: number;
 }
 
 export interface StoredBook {
@@ -13,71 +14,85 @@ export interface StoredBook {
   cover: string | null;
   epubData: ArrayBuffer;
   chapters: BookChapter[];
-  /** @deprecated kept for backward-compat migration only */
+  /** @deprecated kept for backward-compat only */
   chapterTitles?: string[];
   addedAt: number;
 }
 
-export interface AudioCache {
-  key: string;
-  audioBase64: string;
-  timestamps: WordTimestamp[];
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function base64ToArrayBuffer(b64: string): ArrayBuffer {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
 }
 
-export interface WordTimestamp {
-  word: string;
-  startMs: number;
-  endMs: number;
+// ── API calls ─────────────────────────────────────────────────────────────────
+
+/** Upload a new book. Sends epub as multipart to avoid base64 overhead. */
+export async function saveBook(book: StoredBook): Promise<void> {
+  const form = new FormData();
+  form.append(
+    "metadata",
+    JSON.stringify({
+      id: book.id,
+      title: book.title,
+      author: book.author,
+      cover: book.cover,
+      chapters: book.chapters,
+      addedAt: book.addedAt,
+    })
+  );
+  form.append("epub", new Blob([book.epubData], { type: "application/epub+zip" }));
+  const res = await fetch("/api/books", { method: "POST", body: form });
+  if (!res.ok) throw new Error(`saveBook failed: ${await res.text()}`);
 }
 
-let _db: IDBPDatabase | null = null;
-
-async function getDB() {
-  if (!_db) {
-    _db = await openDB("epub-reader-db", 1, {
-      upgrade(db) {
-        db.createObjectStore("books", { keyPath: "id" });
-        db.createObjectStore("audioCache", { keyPath: "key" });
-      },
-    });
-  }
-  return _db;
+/** Update only the chapter list for an existing book (no epub re-upload). */
+export async function updateBookChapters(id: string, chapters: BookChapter[]): Promise<void> {
+  await fetch(`/api/books/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chapters }),
+  });
 }
 
-export async function saveBook(book: StoredBook) {
-  const db = await getDB();
-  await db.put("books", book);
-}
-
+/** Fetch a single book including its epub data. */
 export async function getBook(id: string): Promise<StoredBook | undefined> {
-  const db = await getDB();
-  return db.get("books", id);
+  const res = await fetch(`/api/books/${id}`);
+  if (!res.ok) return undefined;
+  const data = await res.json();
+  return {
+    id: data.id,
+    title: data.title,
+    author: data.author,
+    cover: data.cover,
+    epubData: base64ToArrayBuffer(data.epubBase64),
+    chapters: data.chapters,
+    addedAt: data.addedAt,
+  };
 }
 
+/** List all books (no epub data — suitable for the library grid). */
 export async function getAllBooks(): Promise<StoredBook[]> {
-  const db = await getDB();
-  return db.getAll("books");
+  const res = await fetch("/api/books");
+  if (!res.ok) return [];
+  const { books } = await res.json();
+  return books.map((b: Omit<StoredBook, "epubData">) => ({
+    ...b,
+    epubData: new ArrayBuffer(0), // Not needed for library listing
+  }));
 }
 
-export async function deleteBook(id: string) {
-  const db = await getDB();
-  await db.delete("books", id);
-  // also clear audio cache for this book
-  const tx = db.transaction("audioCache", "readwrite");
-  const store = tx.objectStore("audioCache");
-  const allKeys = await store.getAllKeys();
-  for (const k of allKeys) {
-    if (String(k).startsWith(`${id}-`)) await store.delete(k);
-  }
-  await tx.done;
+/** Delete a book and all its data. */
+export async function deleteBook(id: string): Promise<void> {
+  await fetch(`/api/books/${id}`, { method: "DELETE" });
 }
 
-export async function getAudioCache(bookId: string, chapterIdx: number): Promise<AudioCache | undefined> {
-  const db = await getDB();
-  return db.get("audioCache", `${bookId}-${chapterIdx}`);
-}
+// ── Audio cache (no-ops — TTS now uses Web Speech API, nothing to cache) ─────
 
-export async function saveAudioCache(bookId: string, chapterIdx: number, data: { audioBase64: string; timestamps: WordTimestamp[] }) {
-  const db = await getDB();
-  await db.put("audioCache", { key: `${bookId}-${chapterIdx}`, ...data });
-}
+export interface WordTimestamp { word: string; startMs: number; endMs: number; }
+export interface AudioCache { key: string; audioBase64: string; timestamps: WordTimestamp[]; }
+export async function getAudioCache() { return undefined; }
+export async function saveAudioCache() {}

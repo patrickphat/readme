@@ -10,7 +10,7 @@ import { TranscriptPanel } from "@/components/TranscriptPanel";
 import { AudioControls } from "@/components/AudioControls";
 import { SettingsPopover } from "@/components/SettingsPopover";
 import { loadChapter, type TextBlock } from "@/lib/epub";
-import { getBook, saveBook, type BookChapter } from "@/lib/db";
+import { getBook, updateBookChapters, type BookChapter } from "@/lib/db";
 import { cn } from "@/lib/utils";
 
 interface ReaderProps {
@@ -110,7 +110,7 @@ export function Reader({ bookId }: ReaderProps) {
         const file = new File([blob], "book.epub", { type: "application/epub+zip" });
         const reparsed = await parseEpubFile(file);
         resolvedChapters = reparsed.chapters;
-        await saveBook({ ...book, chapters: resolvedChapters });
+        await updateBookChapters(book.id, resolvedChapters);
       } catch {}
 
       setChapters(resolvedChapters);
