@@ -1,0 +1,53 @@
+"use client";
+
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { BookOpen, Trash2 } from "lucide-react";
+import type { StoredBook } from "@/lib/db";
+
+interface BookCardProps {
+  book: StoredBook;
+  onOpen: (id: string) => void;
+  onDelete: (id: string) => void;
+}
+
+export function BookCard({ book, onOpen, onDelete }: BookCardProps) {
+  return (
+    <Card className="group overflow-hidden hover:shadow-lg transition-shadow cursor-pointer">
+      <div
+        className="relative aspect-[2/3] bg-muted flex items-center justify-center overflow-hidden"
+        onClick={() => onOpen(book.id)}
+      >
+        {book.cover ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={book.cover} alt={book.title} className="w-full h-full object-cover" />
+        ) : (
+          <div className="flex flex-col items-center gap-2 p-4 text-muted-foreground">
+            <BookOpen className="w-12 h-12" />
+            <span className="text-xs text-center line-clamp-3 font-medium">{book.title}</span>
+          </div>
+        )}
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+      </div>
+
+      <CardContent className="p-3">
+        <p className="font-semibold text-sm line-clamp-1">{book.title}</p>
+        <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{book.author}</p>
+        <div className="flex items-center justify-between mt-2">
+          <Badge variant="secondary" className="text-xs">
+            {(book.chapters ?? book.chapterTitles ?? []).length} ch
+          </Badge>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive"
+            onClick={(e) => { e.stopPropagation(); onDelete(book.id); }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
