@@ -10,11 +10,16 @@ import { UploadZone } from "@/components/UploadZone";
 import { parseEpubFile } from "@/lib/epub";
 import { getAllBooks, saveBook, deleteBook, type StoredBook } from "@/lib/db";
 
+interface UploadingItem {
+  id: string;
+  name: string;
+}
+
 export default function LibraryPage() {
   const router = useRouter();
   const [books, setBooks] = useState<StoredBook[]>([]);
   const [loading, setLoading] = useState(true);
-  const [importing, setImporting] = useState(false);
+  const [uploading, setUploading] = useState<UploadingItem[]>([]);
 
   async function handleLogout() {
     await fetch("/api/auth", { method: "DELETE" });
@@ -29,18 +34,19 @@ export default function LibraryPage() {
   }, []);
 
   async function handleFile(file: File) {
-    setImporting(true);
+    const tempId = Math.random().toString(36).slice(2);
+    setUploading((prev) => [...prev, { id: tempId, name: file.name }]);
     try {
       const parsed = await parseEpubFile(file);
       const book: StoredBook = { ...parsed, addedAt: Date.now() };
       await saveBook(book);
       setBooks((prev) => [book, ...prev]);
-      toast.success(`"${parsed.title}" added to library`);
+      toast.success(`"${parsed.title}" added`);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to import EPUB. Make sure the file is valid.");
+      toast.error(`Failed to import "${file.name}"`);
     } finally {
-      setImporting(false);
+      setUploading((prev) => prev.filter((u) => u.id !== tempId));
     }
   }
 
@@ -49,6 +55,8 @@ export default function LibraryPage() {
     setBooks((prev) => prev.filter((b) => b.id !== id));
     toast.success("Book removed");
   }
+
+  const isEmpty = !loading && books.length === 0 && uploading.length === 0;
 
   return (
     <div className="min-h-screen bg-background">
@@ -61,19 +69,30 @@ export default function LibraryPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8 space-y-8">
-        <UploadZone onFile={handleFile} loading={importing} />
+        <UploadZone onFile={handleFile} loading={false} />
 
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
-        ) : books.length === 0 ? (
+        ) : isEmpty ? (
           <div className="text-center py-16 text-muted-foreground">
             <BookOpen className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p className="text-sm">Your library is empty. Upload an EPUB to get started.</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {/* In-progress uploads show first */}
+            {uploading.map((u) => (
+              <div key={u.id} className="flex flex-col gap-2">
+                <div className="aspect-[2/3] rounded-lg bg-muted animate-pulse flex items-center justify-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+                <p className="text-xs text-muted-foreground text-center truncate px-1">{u.name}</p>
+                <p className="text-xs text-primary text-center">Uploading…</p>
+              </div>
+            ))}
+
             {books.map((book) => (
               <BookCard
                 key={book.id}
