@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Settings } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 
@@ -31,7 +31,7 @@ export function SettingsPopover({
   useEffect(() => {
     function loadVoices() {
       const all = window.speechSynthesis.getVoices();
-      const sorted = [...all].filter((v) => v.lang.startsWith("en")).sort((a, b) => {
+      const sorted = [...all].filter((v) => v.lang.startsWith("en") || v.lang.startsWith("vi")).sort((a, b) => {
         // Local (system) voices first, then alphabetical
         if (a.localService !== b.localService) return a.localService ? -1 : 1;
         return a.name.localeCompare(b.name);
@@ -44,17 +44,35 @@ export function SettingsPopover({
   }, []);
 
   function VoiceSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+    const enVoices = voices.filter((v) => v.lang.startsWith("en"));
+    const viVoices = voices.filter((v) => v.lang.startsWith("vi"));
+
     return (
       <Select value={value} onValueChange={(v) => v && onChange(v)} disabled={voices.length === 0}>
         <SelectTrigger className="h-8 text-xs">
           <SelectValue placeholder="Browser default" />
         </SelectTrigger>
         <SelectContent>
-          {voices.map((v) => (
-            <SelectItem key={v.voiceURI} value={v.voiceURI} className="text-xs">
-              {v.name}{v.localService ? "" : " ☁"}
-            </SelectItem>
-          ))}
+          {enVoices.length > 0 && (
+            <SelectGroup>
+              <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1">🇺🇸 English</SelectLabel>
+              {enVoices.map((v) => (
+                <SelectItem key={v.voiceURI} value={v.voiceURI} className="text-xs">
+                  {v.name}{v.localService ? "" : " ☁"}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )}
+          {viVoices.length > 0 && (
+            <SelectGroup>
+              <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1">🇻🇳 Tiếng Việt</SelectLabel>
+              {viVoices.map((v) => (
+                <SelectItem key={v.voiceURI} value={v.voiceURI} className="text-xs">
+                  {v.name}{v.localService ? "" : " ☁"}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )}
         </SelectContent>
       </Select>
     );
