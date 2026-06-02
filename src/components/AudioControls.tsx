@@ -13,6 +13,7 @@ interface AudioControlsProps {
   onPrevChapter: () => void;
   onNextChapter: () => void;
   chapterTitle: string;
+  onTitleClick?: () => void;
 }
 
 export function AudioControls({
@@ -24,13 +25,20 @@ export function AudioControls({
   onPrevChapter,
   onNextChapter,
   chapterTitle,
+  onTitleClick,
 }: AudioControlsProps) {
   const wordProgress = Math.max(0, currentWordIdx);
 
   return (
     <div className="border-t bg-background/95 backdrop-blur px-6 py-3 space-y-2">
-      {/* Chapter title */}
-      <p className="text-xs font-medium text-foreground line-clamp-1">{chapterTitle}</p>
+      {/* Chapter title — centered, clickable to open ToC */}
+      <button
+        className="w-full text-center text-xs font-medium text-foreground line-clamp-1 hover:text-primary transition-colors cursor-pointer"
+        onClick={onTitleClick}
+        title="Open table of contents"
+      >
+        {chapterTitle}
+      </button>
 
       {/* Progress bar */}
       <div className="flex items-center gap-3">
