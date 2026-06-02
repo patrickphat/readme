@@ -1,5 +1,5 @@
-// Kokoro TTS engine — browser-only, loaded lazily on first use.
-// Singleton pattern so the model is only downloaded once per session.
+// Kokoro TTS engine — delegates inference to a Web Worker so WASM never
+// blocks the main thread. Audio is played via Web Audio API.
 
 export const KOKORO_VOICES = [
   { id: "af_heart",    name: "Heart ♀ US" },
@@ -18,67 +18,95 @@ export const KOKORO_VOICES = [
 export type KokoroVoiceId = (typeof KOKORO_VOICES)[number]["id"];
 export const DEFAULT_KOKORO_VOICE: KokoroVoiceId = "af_heart";
 
-export interface RawAudio {
-  audio: Float32Array;
-  sampling_rate: number;
+// ── Worker bridge ─────────────────────────────────────────────────────────────
+
+type WorkerResponse =
+  | { id: string; type: "progress"; msg: string }
+  | { id: string; type: "loaded" }
+  | { id: string; type: "audio"; audio: Float32Array; sampling_rate: number }
+  | { id: string; type: "error"; msg: string };
+
+let workerSingleton: Worker | null = null;
+let msgCounter = 0;
+const pending = new Map<string, {
+  resolve: (v: unknown) => void;
+  reject: (e: Error) => void;
+  onProgress?: (msg: string) => void;
+}>();
+
+function getWorker(): Worker {
+  if (workerSingleton) return workerSingleton;
+  workerSingleton = new Worker(
+    new URL("../workers/kokoro.worker.ts", import.meta.url),
+    { type: "module" }
+  );
+  workerSingleton.onmessage = (e: MessageEvent<WorkerResponse>) => {
+    const { id, type } = e.data;
+    const cb = pending.get(id);
+    if (!cb) return;
+    if (type === "progress") {
+      cb.onProgress?.(e.data.msg);
+    } else if (type === "loaded") {
+      pending.delete(id);
+      cb.resolve(undefined);
+    } else if (type === "audio") {
+      pending.delete(id);
+      cb.resolve({ audio: e.data.audio, sampling_rate: e.data.sampling_rate });
+    } else if (type === "error") {
+      pending.delete(id);
+      cb.reject(new Error(e.data.msg));
+    }
+  };
+  workerSingleton.onerror = (e) => {
+    console.error("Kokoro worker error:", e);
+  };
+  return workerSingleton;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type TTS = any;
+function workerCall<T>(
+  msg: object,
+  onProgress?: (msg: string) => void
+): Promise<T> {
+  const id = String(msgCounter++);
+  return new Promise<T>((resolve, reject) => {
+    pending.set(id, {
+      resolve: resolve as (v: unknown) => void,
+      reject,
+      onProgress,
+    });
+    getWorker().postMessage({ id, ...msg });
+  });
+}
 
-let singleton: KokoroEngine | null = null;
+// ── Engine class ─────────────────────────────────────────────────────────────
+
+let engineInstance: KokoroEngine | null = null;
 let loadPromise: Promise<KokoroEngine> | null = null;
 
 export class KokoroEngine {
-  private tts: TTS;
   readonly ctx: AudioContext;
   private src: AudioBufferSourceNode | null = null;
   private wordTick: ReturnType<typeof setInterval> | null = null;
   private _paused = false;
   private _ctxTimeAtStart = 0;
-  private _audioOffsetAtStart = 0; // seconds already played before current start
+  private _audioOffsetAtStart = 0;
 
-  private constructor(tts: TTS) {
-    this.tts = tts;
+  private constructor() {
     this.ctx = new AudioContext();
   }
 
-  // ── Singleton loader ─────────────────────────────────────────────────────
+  // ── Singleton loader ──────────────────────────────────────────────────────
 
   static async load(onProgress: (msg: string) => void): Promise<KokoroEngine> {
-    if (singleton) return singleton;
+    if (engineInstance) return engineInstance;
     if (loadPromise) return loadPromise;
 
     loadPromise = (async () => {
-      // Disable local-file lookup — Next.js mocks `fs` as false in browser
-      // bundles, which makes transformers.js throw "Unauthorized access to file"
-      // when it tries to stat local paths before falling back to remote fetch.
-      const { env } = await import("@huggingface/transformers");
-      env.allowLocalModels = false;
-      env.useBrowserCache = true;
-
-      const { KokoroTTS } = await import("kokoro-js");
-      const tts = await (KokoroTTS as { from_pretrained: Function }).from_pretrained(
-        "onnx-community/Kokoro-82M-v1.0-ONNX",
-        {
-          dtype: "q8",    // ~83 MB — good quality/size balance
-          device: "wasm", // wasm works everywhere; webgpu faster but not on iOS
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          progress_callback: (info: any) => {
-            if (info.status === "initiate") {
-              onProgress("Downloading AI voice model (~83 MB)…");
-            } else if (info.status === "progress" && info.progress != null) {
-              const file = (info.file as string | undefined)?.split("/").pop() ?? "";
-              onProgress(`Downloading${file ? ` ${file}` : ""}: ${Math.round(info.progress as number)}%`);
-            } else if (info.status === "done") {
-              onProgress("Finalizing…");
-            }
-          },
-        }
-      );
-      singleton = new KokoroEngine(tts);
+      // Kick off the worker and wait for the model to be ready
+      await workerCall<void>({ type: "load" }, onProgress);
+      engineInstance = new KokoroEngine();
       loadPromise = null;
-      return singleton;
+      return engineInstance;
     })().catch((e) => {
       loadPromise = null;
       throw e;
@@ -88,19 +116,26 @@ export class KokoroEngine {
   }
 
   static getIfReady(): KokoroEngine | null {
-    return singleton;
+    return engineInstance;
   }
 
-  // ── Audio generation ─────────────────────────────────────────────────────
+  // ── Audio generation (runs in worker, non-blocking) ───────────────────────
 
-  async generate(text: string, voice: string): Promise<RawAudio> {
-    return this.tts.generate(text, { voice }) as Promise<RawAudio>;
+  async generate(
+    text: string,
+    voice: string
+  ): Promise<{ audio: Float32Array; sampling_rate: number }> {
+    return workerCall<{ audio: Float32Array; sampling_rate: number }>({
+      type: "generate",
+      text,
+      voice,
+    });
   }
 
-  // ── Playback ─────────────────────────────────────────────────────────────
+  // ── Playback (Web Audio API, main thread) ─────────────────────────────────
 
   play(
-    raw: RawAudio,
+    raw: { audio: Float32Array; sampling_rate: number },
     rate: number,
     wordCount: number,
     globalOffset: number,
@@ -161,8 +196,6 @@ export class KokoroEngine {
     this._paused = false;
     this._ctxTimeAtStart = this.ctx.currentTime;
     this.ctx.resume();
-    // re-arm word ticker
-    // (caller is responsible for re-starting if needed — see Reader)
   }
 
   stop(): void {
