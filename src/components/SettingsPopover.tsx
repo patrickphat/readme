@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 
-const RATES = [0.75, 1, 1.25, 1.5, 1.75, 2];
+const PRESET_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 interface SettingsPopoverProps {
   playbackRate: number;
@@ -75,18 +75,40 @@ export function SettingsPopover({
         {/* Speed */}
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">Speed</Label>
-          <Select value={String(playbackRate)} onValueChange={(v) => v && onRateChange(Number(v))}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {RATES.map((r) => (
-                <SelectItem key={r} value={String(r)} className="text-xs">
-                  {r}×
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex gap-1.5">
+            <Select
+              value={PRESET_RATES.includes(playbackRate) ? String(playbackRate) : "custom"}
+              onValueChange={(v) => v && v !== "custom" && onRateChange(Number(v))}
+            >
+              <SelectTrigger className="h-8 text-xs flex-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PRESET_RATES.map((r) => (
+                  <SelectItem key={r} value={String(r)} className="text-xs">
+                    {r}×
+                  </SelectItem>
+                ))}
+                {!PRESET_RATES.includes(playbackRate) && (
+                  <SelectItem value="custom" className="text-xs">
+                    {playbackRate}× (custom)
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            <input
+              type="number"
+              min={0.1}
+              max={4}
+              step={0.05}
+              value={playbackRate}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (!isNaN(v) && v >= 0.1 && v <= 4) onRateChange(v);
+              }}
+              className="h-8 w-16 rounded-md border border-input bg-background px-2 text-xs text-center tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
         </div>
 
         <Separator />
