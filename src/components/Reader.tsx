@@ -222,26 +222,33 @@ export function Reader({ bookId }: ReaderProps) {
     setBookLoading(true);
 
     async function load() {
-      // Load saved progress and epub in parallel
-      const [savedProgress, cachedEpub] = await Promise.all([
+      // Fire all independent fetches in parallel:
+      // - progress  (Turso)
+      // - epub      (IndexedDB cache — fast if hit)
+      // - metadata  (Turso, always needed, no epub blob)
+      const [savedProgress, cachedEpub, meta] = await Promise.all([
         loadProgress(bookId),
         getCachedEpub(bookId),
+        getBookMeta(bookId),
       ]);
 
       let resolvedChapters: BookChapter[] = [];
+      let epubBuffer: ArrayBuffer;
 
       if (cachedEpub) {
-        const meta = await getBookMeta(bookId);
+        // Fast path — epub already local, meta came in parallel
         if (!meta) { router.push("/"); return; }
         setBookTitle(meta.title);
-        setEpubData(cachedEpub);
+        epubBuffer = cachedEpub;
         resolvedChapters = meta.chapters;
       } else {
+        // Slow path — download full epub blob from Turso
         const book = await getBook(bookId);
         if (!book) { router.push("/"); return; }
         setBookTitle(book.title);
-        setEpubData(book.epubData);
-        await setCachedEpub(bookId, book.epubData);
+        epubBuffer = book.epubData;
+        // Cache locally and write metadata in background (don't await)
+        setCachedEpub(bookId, book.epubData);
 
         resolvedChapters = book.chapters ?? [];
         if (resolvedChapters.length === 0) {
@@ -251,10 +258,12 @@ export function Reader({ bookId }: ReaderProps) {
             const file = new File([blob], "book.epub", { type: "application/epub+zip" });
             const reparsed = await parseEpubFile(file);
             resolvedChapters = reparsed.chapters;
-            await updateBookChapters(book.id, resolvedChapters);
+            updateBookChapters(book.id, resolvedChapters); // background
           } catch {}
         }
       }
+
+      setEpubData(epubBuffer);
 
       setChapters(resolvedChapters);
 
