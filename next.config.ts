@@ -2,8 +2,21 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   // Don't bundle these Node.js-native packages — require them at runtime instead
-  serverExternalPackages: ["msedge-tts", "ws", "@libsql/client"],
+  serverExternalPackages: ["@libsql/client"],
 
+  // Turbopack config (default bundler in Next.js 16)
+  // resolveAlias maps node built-ins to false in browser bundles so epubjs doesn't crash
+  turbopack: {
+    resolveAlias: {
+      fs: { browser: "@/lib/empty-module" },
+      path: { browser: "@/lib/empty-module" },
+      stream: { browser: "@/lib/empty-module" },
+      buffer: { browser: "@/lib/empty-module" },
+      crypto: { browser: "@/lib/empty-module" },
+    },
+  },
+
+  // Keep webpack config so `next dev --webpack` still works locally
   webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve.fallback = {

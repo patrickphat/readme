@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowLeft, Menu, X } from "lucide-react";
+import { ArrowLeft, Loader2, Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChapterSidebar } from "@/components/ChapterSidebar";
 import { TranscriptPanel } from "@/components/TranscriptPanel";
@@ -61,6 +61,7 @@ export function Reader({ bookId }: ReaderProps) {
   const router = useRouter();
 
   // Book state
+  const [bookLoading, setBookLoading] = useState(true);
   const [bookTitle, setBookTitle] = useState("");
   const [chapters, setChapters] = useState<BookChapter[]>([]);
   const [epubData, setEpubData] = useState<ArrayBuffer | null>(null);
@@ -96,8 +97,9 @@ export function Reader({ bookId }: ReaderProps) {
 
   const totalWords = blocks.reduce((s, b) => s + b.words.length, 0);
 
-  // Load book from IndexedDB
+  // Load book from Turso
   useEffect(() => {
+    setBookLoading(true);
     getBook(bookId).then(async (book) => {
       if (!book) { router.push("/"); return; }
       setBookTitle(book.title);
@@ -118,7 +120,7 @@ export function Reader({ bookId }: ReaderProps) {
       const FRONT_MATTER = /^(cover|title|copyright|dedication|contents|toc|preface|foreword|introduction|prologue|about)/i;
       const firstContent = resolvedChapters.findIndex((c) => !FRONT_MATTER.test(c.title.trim()));
       if (firstContent > 0) setCurrentIdx(firstContent);
-    });
+    }).finally(() => setBookLoading(false));
   }, [bookId, router]);
 
   // Load chapter content
@@ -309,6 +311,15 @@ export function Reader({ bookId }: ReaderProps) {
 
   const currentChapter = chapters[currentIdx];
   const currentChapterTitle = currentChapter?.title ?? "";
+
+  if (bookLoading) {
+    return (
+      <div className="flex flex-col h-screen items-center justify-center gap-4 bg-background text-muted-foreground">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <p className="text-sm">Loading book…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background">
