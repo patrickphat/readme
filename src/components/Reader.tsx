@@ -13,6 +13,7 @@ import { loadChapter, type TextBlock } from "@/lib/epub";
 import { getBook, getBookMeta, updateBookChapters, type BookChapter } from "@/lib/db";
 import { getCachedEpub, setCachedEpub } from "@/lib/epub-cache";
 import { cn } from "@/lib/utils";
+import { KokoroEngine, DEFAULT_KOKORO_VOICE, type KokoroVoiceId } from "@/lib/kokoro-engine";
 
 interface ReaderProps {
   bookId: string;
@@ -129,6 +130,25 @@ export function Reader({ bookId }: ReaderProps) {
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // ── Kokoro (AI TTS) state ─────────────────────────────────────────────────
+  const [useKokoro, setUseKokoro] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("epub-reader-engine") === "kokoro";
+  });
+  const [kokoroStatus, setKokoroStatus] = useState<"idle" | "loading" | "ready" | "error">(
+    () => (KokoroEngine.getIfReady() ? "ready" : "idle")
+  );
+  const [kokoroProgress, setKokoroProgress] = useState("");
+  const [kokoroVoice, setKokoroVoiceState] = useState<string>(() => {
+    if (typeof window === "undefined") return DEFAULT_KOKORO_VOICE;
+    return localStorage.getItem("epub-reader-kokoro-voice") ?? DEFAULT_KOKORO_VOICE;
+  });
+  const kokoroVoiceRef = useRef(kokoroVoice);
+  const kokoroEngineRef = useRef<KokoroEngine | null>(KokoroEngine.getIfReady());
+  const kokoroCancelledRef = useRef(false); // flag: stop pending generate() calls
+  const useKokoroRef = useRef(useKokoro);
+  useKokoroRef.current = useKokoro;
+
   // Compute chunks synchronously so they're always current on every render
   const chunks = useMemo(() => buildChunks(blocks), [blocks]);
 
@@ -172,6 +192,18 @@ export function Reader({ bookId }: ReaderProps) {
         headingVoiceURIRef.current = s["epub-reader-heading-voice"];
         setHeadingVoiceURIState(s["epub-reader-heading-voice"]);
         localStorage.setItem("epub-reader-heading-voice", s["epub-reader-heading-voice"]);
+      }
+      if (s["epub-reader-engine"]) {
+        const eng = s["epub-reader-engine"];
+        localStorage.setItem("epub-reader-engine", eng);
+        const isK = eng === "kokoro";
+        setUseKokoro(isK);
+        useKokoroRef.current = isK;
+      }
+      if (s["epub-reader-kokoro-voice"]) {
+        kokoroVoiceRef.current = s["epub-reader-kokoro-voice"];
+        setKokoroVoiceState(s["epub-reader-kokoro-voice"]);
+        localStorage.setItem("epub-reader-kokoro-voice", s["epub-reader-kokoro-voice"]);
       }
     });
   }, []);
@@ -253,9 +285,12 @@ export function Reader({ bookId }: ReaderProps) {
     const chapter = chapters[currentIdx];
     if (!chapter) return;
 
+    kokoroCancelledRef.current = true;
+    kokoroEngineRef.current?.stop();
     window.speechSynthesis?.cancel();
     setIsPlaying(false);
     setActiveWordIdx(-1);
+    setKokoroProgress("");
     setChapterLoading(true);
 
     loadChapter(epubData, chapter.spineIdx, chapter.title)
@@ -273,12 +308,15 @@ export function Reader({ bookId }: ReaderProps) {
       .finally(() => setChapterLoading(false));
   }, [bookId, epubData, chapters, currentIdx]);
 
-  // ── Clear heading-pause timer when blocks change ─────────────────────────
-  // NOTE: do NOT cancel speech here — the chapter load effect already cancels
-  // before loading starts, and calling cancel() here puts Chrome's speech
-  // synthesis into a stale paused=true state that prevents the next play call.
+  // ── Stop all engines when blocks change ─────────────────────────────────
   useEffect(() => {
     if (headingPauseRef.current) clearTimeout(headingPauseRef.current);
+    kokoroCancelledRef.current = true;
+    kokoroEngineRef.current?.stop();
+    setKokoroProgress("");
+    // NOTE: do NOT call window.speechSynthesis.cancel() here — chapter load
+    // effect already cancels it, and re-cancelling leaves Chrome in a stale
+    // paused=true state that blocks the next play call.
   }, [blocks]);
 
   // ── Save progress when chapter/word changes ───────────────────────────────
@@ -349,20 +387,99 @@ export function Reader({ bookId }: ReaderProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapters.length]);
 
-  // Stop speech on unmount
+  // Stop all engines on unmount
   useEffect(() => {
     return () => {
+      kokoroCancelledRef.current = true;
+      kokoroEngineRef.current?.stop();
       window.speechSynthesis?.cancel();
       silentAudioRef.current?.source.stop();
       silentAudioRef.current?.ctx.close();
       silentAudioRef.current = null;
       if (saveProgressTimerRef.current) clearTimeout(saveProgressTimerRef.current);
-      // Flush progress immediately on unmount
       saveProgress(bookId, currentIdxRef.current, Math.max(0, activeWordIdxRef.current));
     };
   }, [bookId]);
 
-  // ── Speech engine ──────────────────────────────────────────────────────────
+  // ── Kokoro speech engine ───────────────────────────────────────────────────
+
+  const speakFromChunkKokoro = useCallback(async (chunkIdx: number, wordWithinChunk = 0) => {
+    kokoroCancelledRef.current = false;
+    const currentChunks = chunksRef.current;
+
+    if (chunkIdx >= currentChunks.length) {
+      setIsPlaying(false);
+      setActiveWordIdx(-1);
+      return;
+    }
+
+    // Ensure engine is loaded
+    let engine = kokoroEngineRef.current;
+    if (!engine) {
+      setKokoroStatus("loading");
+      try {
+        engine = await KokoroEngine.load((msg) => setKokoroProgress(msg));
+        kokoroEngineRef.current = engine;
+        setKokoroStatus("ready");
+        setKokoroProgress("");
+      } catch (e) {
+        console.error("Kokoro load failed:", e);
+        setKokoroStatus("error");
+        setIsPlaying(false);
+        return;
+      }
+    }
+
+    if (kokoroCancelledRef.current) return;
+
+    const chunk = currentChunks[chunkIdx];
+    const trimCharStart = chunk.wordStarts[wordWithinChunk] ?? 0;
+    const text = chunk.text.slice(trimCharStart);
+    if (!text.trim()) { speakFromChunkKokoro(chunkIdx + 1, 0); return; }
+
+    const wordsInChunk = chunk.wordStarts.length - wordWithinChunk;
+
+    setKokoroProgress("Generating audio…");
+    let raw;
+    try {
+      raw = await engine.generate(text, kokoroVoiceRef.current);
+    } catch (e) {
+      console.error("Kokoro generate failed:", e);
+      setIsPlaying(false);
+      setKokoroProgress("");
+      return;
+    }
+    setKokoroProgress("");
+
+    if (kokoroCancelledRef.current) return;
+
+    engine.play(
+      raw,
+      playbackRateRef.current,
+      wordsInChunk,
+      chunk.globalOffset + wordWithinChunk,
+      (globalWordIdx) => setActiveWordIdx(globalWordIdx),
+      () => {
+        if (kokoroCancelledRef.current) return;
+        const next = chunkIdx + 1;
+        if (next >= chunksRef.current.length) {
+          setIsPlaying(false);
+          setActiveWordIdx(-1);
+          return;
+        }
+        const delay = chunk.isHeading ? 800 : 0;
+        if (delay > 0) {
+          headingPauseRef.current = setTimeout(() => speakFromChunkKokoro(next, 0), delay);
+        } else {
+          speakFromChunkKokoro(next, 0);
+        }
+      },
+    );
+    setIsPlaying(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Web Speech engine ──────────────────────────────────────────────────────
 
   const speakFromChunk = useCallback((chunkIdx: number, wordWithinChunk = 0) => {
     const chunks = chunksRef.current;
@@ -431,42 +548,61 @@ export function Reader({ bookId }: ReaderProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function handlePlayPause() {
-    const ss = window.speechSynthesis;
-    if (isPlaying) {
-      // Currently speaking → pause
-      ss.pause();
-      setIsPlaying(false);
-    } else if (ss.paused && ss.speaking) {
-      // Legitimately mid-utterance and paused → resume
-      ss.resume();
-      setIsPlaying(true);
+  function stopAll() {
+    kokoroCancelledRef.current = true;
+    kokoroEngineRef.current?.stop();
+    window.speechSynthesis?.cancel();
+    setKokoroProgress("");
+  }
+
+  function startSpeaking(wordIdx: number) {
+    const currentChunks = chunksRef.current;
+    if (currentChunks.length === 0) return;
+    const { ci, wordWithinChunk } = findChunkForWord(currentChunks, wordIdx);
+    if (useKokoroRef.current) {
+      speakFromChunkKokoro(ci, wordWithinChunk);
     } else {
-      // Not playing (includes stale ss.paused=true left by cancel()) → start fresh
-      ensureSilentLoop(); // unlock iOS audio session before speaking
-      ss.cancel(); // clears any lingering paused state
-      const startIdx = activeWordIdx >= 0 ? activeWordIdx : 0;
-      const currentChunks = chunksRef.current;
-      if (currentChunks.length === 0) return;
-      const { ci, wordWithinChunk } = findChunkForWord(currentChunks, startIdx);
+      ensureSilentLoop();
+      window.speechSynthesis.cancel();
       speakFromChunk(ci, wordWithinChunk);
     }
   }
 
+  function handlePlayPause() {
+    if (isPlaying) {
+      // Pause whichever engine is active
+      if (useKokoroRef.current) {
+        kokoroEngineRef.current?.pause();
+      } else {
+        window.speechSynthesis.pause();
+      }
+      setIsPlaying(false);
+    } else if (!useKokoroRef.current && window.speechSynthesis.paused && window.speechSynthesis.speaking) {
+      // Resume Web Speech mid-utterance
+      window.speechSynthesis.resume();
+      setIsPlaying(true);
+    } else if (useKokoroRef.current && kokoroEngineRef.current?.isPaused) {
+      // Resume Kokoro mid-buffer
+      kokoroEngineRef.current.resume();
+      setIsPlaying(true);
+    } else {
+      // Start fresh from current word position
+      const startIdx = activeWordIdx >= 0 ? activeWordIdx : 0;
+      stopAll();
+      startSpeaking(startIdx);
+    }
+  }
+
   function handleWordClick(globalIdx: number) {
-    const chunks = chunksRef.current;
-    if (chunks.length === 0) return;
-    const { ci, wordWithinChunk } = findChunkForWord(chunks, globalIdx);
-    speakFromChunk(ci, wordWithinChunk);
+    stopAll();
+    startSpeaking(globalIdx);
   }
 
   function handleSeekWord(globalIdx: number) {
     setActiveWordIdx(globalIdx);
-    if (isPlaying || window.speechSynthesis.paused) {
-      const chunks = chunksRef.current;
-      if (chunks.length === 0) return;
-      const { ci, wordWithinChunk } = findChunkForWord(chunks, globalIdx);
-      speakFromChunk(ci, wordWithinChunk);
+    if (isPlaying) {
+      stopAll();
+      startSpeaking(globalIdx);
     }
   }
 
@@ -475,12 +611,10 @@ export function Reader({ bookId }: ReaderProps) {
     setPlaybackRateState(rate);
     localStorage.setItem("epub-reader-speed", String(rate));
     saveSettings({ "epub-reader-speed": String(rate) });
-    if (isPlaying || window.speechSynthesis.paused) {
-      const chunks = chunksRef.current;
-      if (chunks.length === 0) return;
+    if (isPlaying) {
       const startIdx = activeWordIdx >= 0 ? activeWordIdx : 0;
-      const { ci, wordWithinChunk } = findChunkForWord(chunks, startIdx);
-      speakFromChunk(ci, wordWithinChunk);
+      stopAll();
+      startSpeaking(startIdx);
     }
   }
 
@@ -489,12 +623,10 @@ export function Reader({ bookId }: ReaderProps) {
     setSelectedVoiceURI(voiceURI);
     localStorage.setItem("epub-reader-voice", voiceURI);
     saveSettings({ "epub-reader-voice": voiceURI });
-    if (isPlaying || window.speechSynthesis.paused) {
-      const chunks = chunksRef.current;
-      if (chunks.length === 0) return;
+    if (isPlaying && !useKokoroRef.current) {
       const startIdx = activeWordIdx >= 0 ? activeWordIdx : 0;
-      const { ci, wordWithinChunk } = findChunkForWord(chunks, startIdx);
-      speakFromChunk(ci, wordWithinChunk);
+      stopAll();
+      startSpeaking(startIdx);
     }
   }
 
@@ -503,6 +635,30 @@ export function Reader({ bookId }: ReaderProps) {
     setHeadingVoiceURIState(voiceURI);
     localStorage.setItem("epub-reader-heading-voice", voiceURI);
     saveSettings({ "epub-reader-heading-voice": voiceURI });
+  }
+
+  function handleKokoroVoiceChange(voice: string) {
+    kokoroVoiceRef.current = voice;
+    setKokoroVoiceState(voice);
+    localStorage.setItem("epub-reader-kokoro-voice", voice);
+    saveSettings({ "epub-reader-kokoro-voice": voice });
+    if (isPlaying && useKokoroRef.current) {
+      const startIdx = activeWordIdx >= 0 ? activeWordIdx : 0;
+      stopAll();
+      startSpeaking(startIdx);
+    }
+  }
+
+  function handleEngineChange(engine: "webspeech" | "kokoro") {
+    const isK = engine === "kokoro";
+    setUseKokoro(isK);
+    useKokoroRef.current = isK;
+    localStorage.setItem("epub-reader-engine", engine);
+    saveSettings({ "epub-reader-engine": engine });
+    if (isPlaying) {
+      stopAll();
+      setIsPlaying(false);
+    }
   }
 
   // currentChapterTitle already computed above (needed by effects)
@@ -537,6 +693,10 @@ export function Reader({ bookId }: ReaderProps) {
           onRateChange={setPlaybackRate}
           onContentVoiceChange={handleVoiceChange}
           onHeadingVoiceChange={handleHeadingVoiceChange}
+          useKokoro={useKokoro}
+          kokoroVoice={kokoroVoice}
+          onEngineChange={handleEngineChange}
+          onKokoroVoiceChange={handleKokoroVoiceChange}
         />
       </header>
 
@@ -575,12 +735,26 @@ export function Reader({ bookId }: ReaderProps) {
           />
         </div>
 
-        <TranscriptPanel
-          blocks={blocks}
-          activeWordIdx={activeWordIdx}
-          onWordClick={handleWordClick}
-          isLoading={chapterLoading}
-        />
+        <div className="flex flex-col flex-1 min-w-0 min-h-0">
+          {/* Kokoro status banner */}
+          {useKokoro && (kokoroStatus === "loading" || kokoroProgress) && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-muted text-xs text-muted-foreground border-b shrink-0">
+              <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+              <span className="truncate">{kokoroProgress || "Loading AI voice…"}</span>
+            </div>
+          )}
+          {useKokoro && kokoroStatus === "error" && (
+            <div className="px-4 py-2 bg-destructive/10 text-xs text-destructive border-b shrink-0">
+              Failed to load Kokoro model. Falling back to system voice.
+            </div>
+          )}
+          <TranscriptPanel
+            blocks={blocks}
+            activeWordIdx={activeWordIdx}
+            onWordClick={handleWordClick}
+            isLoading={chapterLoading}
+          />
+        </div>
       </div>
 
       {/* Audio controls */}
