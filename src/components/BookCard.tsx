@@ -13,6 +13,12 @@ interface BookCardProps {
 }
 
 export function BookCard({ book, onOpen, onDelete }: BookCardProps) {
+  const totalChapters = (book.chapters ?? book.chapterTitles ?? []).length;
+  const progressPct = totalChapters > 0
+    ? Math.round(((book.progressChapterIdx ?? 0) / totalChapters) * 100)
+    : 0;
+  const hasProgress = progressPct > 0;
+
   return (
     <Card className="group overflow-hidden hover:shadow-lg transition-shadow cursor-pointer">
       <div
@@ -29,6 +35,25 @@ export function BookCard({ book, onOpen, onDelete }: BookCardProps) {
           </div>
         )}
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+
+        {/* Progress bar overlay at bottom of cover */}
+        {hasProgress && (
+          <div className="absolute bottom-0 left-0 right-0">
+            <div className="h-1 bg-black/20">
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Progress % badge */}
+        {hasProgress && (
+          <div className="absolute top-1.5 right-1.5 bg-black/60 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded-full leading-none">
+            {progressPct}%
+          </div>
+        )}
       </div>
 
       <CardContent className="p-3">
@@ -36,7 +61,7 @@ export function BookCard({ book, onOpen, onDelete }: BookCardProps) {
         <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{book.author}</p>
         <div className="flex items-center justify-between mt-2">
           <Badge variant="secondary" className="text-xs">
-            {(book.chapters ?? book.chapterTitles ?? []).length} ch
+            {totalChapters} ch
           </Badge>
           <Button
             variant="ghost"

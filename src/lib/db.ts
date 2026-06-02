@@ -17,6 +17,10 @@ export interface StoredBook {
   /** @deprecated kept for backward-compat only */
   chapterTitles?: string[];
   addedAt: number;
+  /** 0-based index of the last-read chapter (from progress table) */
+  progressChapterIdx?: number;
+  /** Word index within the last-read chapter */
+  progressWordIdx?: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,7 +100,9 @@ export async function getAllBooks(): Promise<StoredBook[]> {
   const { books } = await res.json();
   return books.map((b: Omit<StoredBook, "epubData">) => ({
     ...b,
-    epubData: new ArrayBuffer(0), // Not needed for library listing
+    epubData: new ArrayBuffer(0),
+    progressChapterIdx: b.progressChapterIdx ?? 0,
+    progressWordIdx: b.progressWordIdx ?? 0,
   }));
 }
 

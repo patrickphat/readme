@@ -3,20 +3,29 @@ import { turso, ensureSchema } from "@/lib/turso";
 
 export const maxDuration = 60;
 
-// GET /api/books — list all books (no epub data)
+// GET /api/books — list all books (no epub data), includes last reading progress
 export async function GET() {
   await ensureSchema();
-  const { rows } = await turso.execute(
-    "SELECT id, title, author, cover, chapters, added_at FROM books ORDER BY added_at DESC"
-  );
-  const books = rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    author: r.author,
-    cover: r.cover ?? null,
-    chapters: JSON.parse(r.chapters as string),
-    addedAt: r.added_at,
-  }));
+  const { rows } = await turso.execute(`
+    SELECT b.id, b.title, b.author, b.cover, b.chapters, b.added_at,
+           p.chapter_idx, p.word_idx
+    FROM books b
+    LEFT JOIN progress p ON p.book_id = b.id
+    ORDER BY b.added_at DESC
+  `);
+  const books = rows.map((r) => {
+    const chapters = JSON.parse(r.chapters as string);
+    return {
+      id: r.id,
+      title: r.title,
+      author: r.author,
+      cover: r.cover ?? null,
+      chapters,
+      addedAt: r.added_at,
+      progressChapterIdx: (r.chapter_idx as number) ?? 0,
+      progressWordIdx: (r.word_idx as number) ?? 0,
+    };
+  });
   return NextResponse.json({ books });
 }
 

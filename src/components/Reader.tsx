@@ -531,6 +531,7 @@ export function Reader({ bookId }: ReaderProps) {
         onNextChapter={() => setCurrentIdx((i) => Math.min(chapters.length - 1, i + 1))}
         chapterTitle={currentChapterTitle}
         onTitleClick={() => setSidebarOpen((v) => !v)}
+        bookProgressPct={chapters.length > 0 ? Math.round((currentIdx / chapters.length) * 100) : 0}
       />
     </div>
   );
