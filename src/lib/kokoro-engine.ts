@@ -59,7 +59,7 @@ export class KokoroEngine {
 
       const { KokoroTTS } = await import("kokoro-js");
       const tts = await (KokoroTTS as { from_pretrained: Function }).from_pretrained(
-        "onnx-community/Kokoro-82M-v1.0",
+        "onnx-community/Kokoro-82M-v1.0-ONNX",
         {
           dtype: "q8",    // ~83 MB — good quality/size balance
           device: "wasm", // wasm works everywhere; webgpu faster but not on iOS
