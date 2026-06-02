@@ -15,7 +15,7 @@ interface ChapterSidebarProps {
 
 export function ChapterSidebar({ chapters, currentIdx, onSelect, onClose }: ChapterSidebarProps) {
   return (
-    <aside className="w-64 shrink-0 border-r flex flex-col h-full bg-muted/20">
+    <aside className="w-full h-full border-r flex flex-col bg-muted/20">
       <div className="px-4 py-3 border-b flex items-center gap-2">
         <BookOpen className="w-4 h-4 text-muted-foreground" />
         <span className="text-sm font-semibold flex-1">Chapters</span>

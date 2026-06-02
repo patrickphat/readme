@@ -335,8 +335,32 @@ export function Reader({ bookId }: ReaderProps) {
       </header>
 
       {/* Body */}
-      <div className="flex flex-1 min-h-0">
-        <div className={cn("transition-all duration-200 shrink-0", sidebarOpen ? "w-64" : "w-0 overflow-hidden")}>
+      <div className="flex flex-1 min-h-0 relative">
+
+        {/* ── Mobile: fullscreen overlay ── */}
+        {sidebarOpen && (
+          <div
+            className="md:hidden fixed inset-0 z-40 bg-black/40"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+        <div className={cn(
+          "md:hidden fixed inset-0 z-50 bg-background transition-transform duration-200",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        )}>
+          <ChapterSidebar
+            chapters={chapters}
+            currentIdx={currentIdx}
+            onSelect={(idx) => { setCurrentIdx(idx); setSidebarOpen(false); }}
+            onClose={() => setSidebarOpen(false)}
+          />
+        </div>
+
+        {/* ── Desktop: inline sidebar ── */}
+        <div className={cn(
+          "hidden md:block shrink-0 transition-all duration-200 overflow-hidden",
+          sidebarOpen ? "w-64" : "w-0"
+        )}>
           <ChapterSidebar
             chapters={chapters}
             currentIdx={currentIdx}
@@ -344,6 +368,7 @@ export function Reader({ bookId }: ReaderProps) {
             onClose={() => setSidebarOpen(false)}
           />
         </div>
+
         <TranscriptPanel
           blocks={blocks}
           activeWordIdx={activeWordIdx}
