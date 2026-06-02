@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, Loader2 } from "lucide-react";
+import { BookOpen, Loader2, LogOut } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { BookCard } from "@/components/BookCard";
 import { UploadZone } from "@/components/UploadZone";
 import { parseEpubFile } from "@/lib/epub";
@@ -14,6 +15,11 @@ export default function LibraryPage() {
   const [books, setBooks] = useState<StoredBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+
+  async function handleLogout() {
+    await fetch("/api/auth", { method: "DELETE" });
+    router.push("/login");
+  }
 
   useEffect(() => {
     getAllBooks()
@@ -48,7 +54,10 @@ export default function LibraryPage() {
     <div className="min-h-screen bg-background">
       <header className="border-b px-6 py-4 flex items-center gap-3">
         <BookOpen className="w-6 h-6 text-primary" />
-        <h1 className="text-xl font-bold tracking-tight">epub reader</h1>
+        <h1 className="text-xl font-bold tracking-tight flex-1">epub reader</h1>
+        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={handleLogout} title="Sign out">
+          <LogOut className="h-4 w-4" />
+        </Button>
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8 space-y-8">
