@@ -31,13 +31,13 @@ export function SettingsPopover({
   useEffect(() => {
     function loadVoices() {
       const all = window.speechSynthesis.getVoices();
-      const en = all
-        .filter((v) => v.lang.startsWith("en"))
-        .sort((a, b) => {
-          if (a.localService !== b.localService) return a.localService ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
-      setVoices(en);
+      // Show all voices — no language filter so nothing is hidden (Siri voices, etc.)
+      const sorted = [...all].sort((a, b) => {
+        // Local (system) voices first, then alphabetical
+        if (a.localService !== b.localService) return a.localService ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      setVoices(sorted);
     }
     loadVoices();
     window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
@@ -90,6 +90,13 @@ export function SettingsPopover({
         </div>
 
         <Separator />
+
+        {/* Safari hint — Chrome/Firefox don't expose system voices like Siri */}
+        {voices.length > 0 && voices.length < 15 && (
+          <p className="text-[11px] text-muted-foreground bg-muted rounded px-2 py-1.5 leading-snug">
+            💡 Open in <strong>Safari</strong> to access Siri &amp; Premium system voices
+          </p>
+        )}
 
         {/* Content voice */}
         <div className="space-y-1.5">
