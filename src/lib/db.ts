@@ -58,6 +58,21 @@ export async function updateBookChapters(id: string, chapters: BookChapter[]): P
   });
 }
 
+/** Fetch book metadata only (no epub). Fast — used when epub is already cached locally. */
+export async function getBookMeta(id: string): Promise<Omit<StoredBook, "epubData"> | undefined> {
+  const res = await fetch(`/api/books/${id}?epub=false`);
+  if (!res.ok) return undefined;
+  const data = await res.json();
+  return {
+    id: data.id,
+    title: data.title,
+    author: data.author,
+    cover: data.cover,
+    chapters: data.chapters,
+    addedAt: data.addedAt,
+  };
+}
+
 /** Fetch a single book including its epub data. */
 export async function getBook(id: string): Promise<StoredBook | undefined> {
   const res = await fetch(`/api/books/${id}`);

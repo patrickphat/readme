@@ -9,6 +9,7 @@ import { BookCard } from "@/components/BookCard";
 import { UploadZone } from "@/components/UploadZone";
 import { parseEpubFile } from "@/lib/epub";
 import { getAllBooks, saveBook, deleteBook, type StoredBook } from "@/lib/db";
+import { deleteCachedEpub } from "@/lib/epub-cache";
 
 interface UploadingItem {
   id: string;
@@ -51,7 +52,7 @@ export default function LibraryPage() {
   }
 
   async function handleDelete(id: string) {
-    await deleteBook(id);
+    await Promise.all([deleteBook(id), deleteCachedEpub(id)]);
     setBooks((prev) => prev.filter((b) => b.id !== id));
     toast.success("Book removed");
   }

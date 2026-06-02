@@ -3,23 +3,27 @@ import { turso, ensureSchema } from "@/lib/turso";
 
 export const maxDuration = 30;
 
-// GET /api/books/[id] — full book including epub data (as base64)
-export async function GET(_req: Request, ctx: RouteContext<"/api/books/[id]">) {
+// GET /api/books/[id] — book metadata + epub data
+// Pass ?epub=false to skip the epub blob (metadata only, much faster)
+export async function GET(req: Request, ctx: RouteContext<"/api/books/[id]">) {
   await ensureSchema();
   const { id } = await ctx.params;
-  const { rows } = await turso.execute({
-    sql: "SELECT id, title, author, cover, epub_data, chapters, added_at FROM books WHERE id = ?",
-    args: [id],
-  });
+  const includeEpub = new URL(req.url).searchParams.get("epub") !== "false";
+
+  const sql = includeEpub
+    ? "SELECT id, title, author, cover, epub_data, chapters, added_at FROM books WHERE id = ?"
+    : "SELECT id, title, author, cover, chapters, added_at FROM books WHERE id = ?";
+
+  const { rows } = await turso.execute({ sql, args: [id] });
   if (rows.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const r = rows[0];
-  const epubBase64 = Buffer.from(r.epub_data as ArrayBuffer).toString("base64");
+
   return NextResponse.json({
     id: r.id,
     title: r.title,
     author: r.author,
     cover: r.cover ?? null,
-    epubBase64,
+    ...(includeEpub && { epubBase64: Buffer.from(r.epub_data as ArrayBuffer).toString("base64") }),
     chapters: JSON.parse(r.chapters as string),
     addedAt: r.added_at,
   });

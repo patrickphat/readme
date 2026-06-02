@@ -10,7 +10,8 @@ import { TranscriptPanel } from "@/components/TranscriptPanel";
 import { AudioControls } from "@/components/AudioControls";
 import { SettingsPopover } from "@/components/SettingsPopover";
 import { loadChapter, type TextBlock } from "@/lib/epub";
-import { getBook, updateBookChapters, type BookChapter } from "@/lib/db";
+import { getBook, getBookMeta, updateBookChapters, type BookChapter } from "@/lib/db";
+import { getCachedEpub, setCachedEpub } from "@/lib/epub-cache";
 import { cn } from "@/lib/utils";
 
 interface ReaderProps {
@@ -97,30 +98,54 @@ export function Reader({ bookId }: ReaderProps) {
 
   const totalWords = blocks.reduce((s, b) => s + b.words.length, 0);
 
-  // Load book from Turso
+  // Load book — use local IndexedDB cache when available to avoid re-downloading from Turso
   useEffect(() => {
     setBookLoading(true);
-    getBook(bookId).then(async (book) => {
-      if (!book) { router.push("/"); return; }
-      setBookTitle(book.title);
-      setEpubData(book.epubData);
 
-      let resolvedChapters: BookChapter[] = book.chapters ?? [];
-      try {
-        const { parseEpubFile } = await import("@/lib/epub");
-        const blob = new Blob([book.epubData]);
-        const file = new File([blob], "book.epub", { type: "application/epub+zip" });
-        const reparsed = await parseEpubFile(file);
-        resolvedChapters = reparsed.chapters;
-        await updateBookChapters(book.id, resolvedChapters);
-      } catch {}
+    async function load() {
+      const cachedEpub = await getCachedEpub(bookId);
 
-      setChapters(resolvedChapters);
+      if (cachedEpub) {
+        // Fast path: epub is already local — only fetch lightweight metadata from Turso
+        const meta = await getBookMeta(bookId);
+        if (!meta) { router.push("/"); return; }
+        setBookTitle(meta.title);
+        setEpubData(cachedEpub);
+        setChapters(meta.chapters);
+        const FRONT_MATTER = /^(cover|title|copyright|dedication|contents|toc|preface|foreword|introduction|prologue|about)/i;
+        const first = meta.chapters.findIndex((c) => !FRONT_MATTER.test(c.title.trim()));
+        if (first > 0) setCurrentIdx(first);
+      } else {
+        // Slow path: download full epub from Turso, then cache it locally
+        const book = await getBook(bookId);
+        if (!book) { router.push("/"); return; }
+        setBookTitle(book.title);
+        setEpubData(book.epubData);
 
-      const FRONT_MATTER = /^(cover|title|copyright|dedication|contents|toc|preface|foreword|introduction|prologue|about)/i;
-      const firstContent = resolvedChapters.findIndex((c) => !FRONT_MATTER.test(c.title.trim()));
-      if (firstContent > 0) setCurrentIdx(firstContent);
-    }).finally(() => setBookLoading(false));
+        // Cache epub for all future opens
+        await setCachedEpub(bookId, book.epubData);
+
+        // Parse chapters if not already stored; otherwise use what Turso has
+        let resolvedChapters: BookChapter[] = book.chapters ?? [];
+        if (resolvedChapters.length === 0) {
+          try {
+            const { parseEpubFile } = await import("@/lib/epub");
+            const blob = new Blob([book.epubData]);
+            const file = new File([blob], "book.epub", { type: "application/epub+zip" });
+            const reparsed = await parseEpubFile(file);
+            resolvedChapters = reparsed.chapters;
+            await updateBookChapters(book.id, resolvedChapters);
+          } catch {}
+        }
+
+        setChapters(resolvedChapters);
+        const FRONT_MATTER = /^(cover|title|copyright|dedication|contents|toc|preface|foreword|introduction|prologue|about)/i;
+        const first = resolvedChapters.findIndex((c) => !FRONT_MATTER.test(c.title.trim()));
+        if (first > 0) setCurrentIdx(first);
+      }
+    }
+
+    load().finally(() => setBookLoading(false));
   }, [bookId, router]);
 
   // Load chapter content
