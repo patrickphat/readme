@@ -270,12 +270,12 @@ export function Reader({ bookId }: ReaderProps) {
       .finally(() => setChapterLoading(false));
   }, [bookId, epubData, chapters, currentIdx]);
 
-  // ── Stop speech when blocks change (chapter switched / content reloaded) ────
+  // ── Clear heading-pause timer when blocks change ─────────────────────────
+  // NOTE: do NOT cancel speech here — the chapter load effect already cancels
+  // before loading starts, and calling cancel() here puts Chrome's speech
+  // synthesis into a stale paused=true state that prevents the next play call.
   useEffect(() => {
     if (headingPauseRef.current) clearTimeout(headingPauseRef.current);
-    window.speechSynthesis?.cancel();
-    setIsPlaying(false);
-    // chunksRef is kept current via useMemo assignment above — no rebuild needed here
   }, [blocks]);
 
   // ── Save progress when chapter/word changes ───────────────────────────────
