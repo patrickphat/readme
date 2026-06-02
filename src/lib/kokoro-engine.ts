@@ -50,6 +50,13 @@ export class KokoroEngine {
     if (loadPromise) return loadPromise;
 
     loadPromise = (async () => {
+      // Disable local-file lookup — Next.js mocks `fs` as false in browser
+      // bundles, which makes transformers.js throw "Unauthorized access to file"
+      // when it tries to stat local paths before falling back to remote fetch.
+      const { env } = await import("@huggingface/transformers");
+      env.allowLocalModels = false;
+      env.useBrowserCache = true;
+
       const { KokoroTTS } = await import("kokoro-js");
       const tts = await (KokoroTTS as { from_pretrained: Function }).from_pretrained(
         "onnx-community/Kokoro-82M-v1.0",

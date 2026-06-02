@@ -30,6 +30,19 @@ const nextConfig: NextConfig = {
     }
     return config;
   },
+
+  async headers() {
+    return [
+      {
+        // COOP/COEP headers required for SharedArrayBuffer (WASM threads used by Kokoro)
+        source: "/(.*)",
+        headers: [
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
