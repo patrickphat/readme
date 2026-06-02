@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, Loader2, LogOut } from "lucide-react";
+import { BookOpen, Loader2, LogOut, Moon, Sun } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { BookCard } from "@/components/BookCard";
@@ -10,6 +10,7 @@ import { UploadZone } from "@/components/UploadZone";
 import { parseEpubFile } from "@/lib/epub";
 import { getAllBooks, saveBook, deleteBook, type StoredBook } from "@/lib/db";
 import { deleteCachedEpub } from "@/lib/epub-cache";
+import { useTheme } from "@/components/ThemeProvider";
 
 interface UploadingItem {
   id: string;
@@ -18,6 +19,7 @@ interface UploadingItem {
 
 export default function LibraryPage() {
   const router = useRouter();
+  const { theme, toggle: toggleTheme } = useTheme();
   const [books, setBooks] = useState<StoredBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState<UploadingItem[]>([]);
@@ -64,6 +66,9 @@ export default function LibraryPage() {
       <header className="border-b px-6 py-4 flex items-center gap-3">
         <BookOpen className="w-6 h-6 text-primary" />
         <h1 className="text-xl font-bold tracking-tight flex-1">epub reader</h1>
+        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={toggleTheme} title="Toggle theme">
+          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </Button>
         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={handleLogout} title="Sign out">
           <LogOut className="h-4 w-4" />
         </Button>
@@ -82,7 +87,7 @@ export default function LibraryPage() {
             <p className="text-sm">Your library is empty. Upload an EPUB to get started.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3 sm:gap-4">
             {/* In-progress uploads show first */}
             {uploading.map((u) => (
               <div key={u.id} className="flex flex-col gap-2">
